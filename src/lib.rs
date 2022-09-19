@@ -46,26 +46,11 @@ pub mod pallet {
             + TypeInfo
             + Zero;
 
-        type Share: Get<u64>
-            + TypeInfo
-            + Member
-            + Parameter
-            + AtLeast32BitUnsigned
-            + Default
-            + Copy
-            + MaybeSerializeDeserialize
-            + MaxEncodedLen;
+        #[pallet::constant]
+        type DefaultShare: Get<Self::Balance>;
 
         #[pallet::constant]
-        type DefaultShare: Get<Self::Share>
-            + TypeInfo
-            + Member
-            + Parameter
-            + AtLeast32BitUnsigned
-            + Default
-            + Copy
-            + MaybeSerializeDeserialize
-            + MaxEncodedLen;
+        type MaxShare: Get<Self::Balance>;
 
         type MultiToken: MultiTokenTrait<Self, Self::AssetId, Self::Balance>;
     }
@@ -86,12 +71,12 @@ pub mod pallet {
         Blake2_128Concat,
         T::AccountId, // Pool address
         Blake2_128Concat,
-        T::AccountId,
-        T::Share, // Pair of assets in the pool & Pool constant
+        T::AccountId, // Liquidity provider address
+        T::Balance,   // Share in the pool
     >;
 
     #[pallet::storage]
-    pub type TotalPoolShares<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, T::Share>;
+    pub type TotalPoolShares<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, T::Balance>;
 
     #[pallet::event]
     #[pallet::generate_deposit(pub fn deposit_event)]
@@ -110,13 +95,31 @@ pub mod pallet {
             second_asset: T::AssetId,
             second_asset_amount: T::Balance,
         },
+        Deposited {
+            operator: T::AccountId,
+            pool_account: T::AccountId,
+            first_asset: T::AssetId,
+            first_asset_amount: T::Balance,
+            second_asset: T::AssetId,
+            second_asset_amount: T::Balance,
+        },
+        Withdrawed {
+            operator: T::AccountId,
+            pool_account: T::AccountId,
+            first_asset: T::AssetId,
+            first_asset_amount: T::Balance,
+            second_asset: T::AssetId,
+            second_asset_amount: T::Balance,
+        },
     }
 
     #[pallet::error]
     pub enum Error<T> {
         Overflow,
         DepositingZeroAmount,
+        WithdrawingZeroAmount,
         PoolAlreadyExists,
+        NoSuchPool,
         NotEnoughBalance,
         NoSuchTokenInPool,
         EmptyPool,
@@ -144,6 +147,10 @@ pub mod pallet {
             Self::check_balance(&first_token_id, &creator, first_token_amount.clone())?;
             Self::check_balance(&second_token_id, &creator, second_token_amount.clone())?;
 
+            let pool_constant = first_token_amount
+                .checked_mul(&second_token_amount)
+                .ok_or(Error::<T>::Overflow)?;
+
             T::MultiToken::safe_transfer(
                 creator.clone(),
                 creator.clone(),
@@ -159,10 +166,6 @@ pub mod pallet {
                 second_token_id.clone(),
                 second_token_amount.clone(),
             )?;
-
-            let pool_constant = first_token_amount
-                .checked_mul(&second_token_amount)
-                .ok_or(Error::<T>::Overflow)?;
 
             Pools::<T>::insert(
                 &pool,
@@ -189,7 +192,7 @@ pub mod pallet {
             let pool = T::Lookup::lookup(pool_address)?;
 
             ensure!(!amount.is_zero(), Error::<T>::DepositingZeroAmount);
-            ensure!(Self::get_pool(&pool) == None, Error::<T>::PoolAlreadyExists);
+            ensure!(Self::get_pool(&pool) != None, Error::<T>::NoSuchPool);
             Self::check_balance(&token_id, &operator, amount.clone())?;
 
             // We have already checked that pool exists
@@ -203,19 +206,16 @@ pub mod pallet {
                 first_asset_id
             };
 
-            T::MultiToken::safe_transfer(
-                operator.clone(),
-                operator.clone(),
-                pool.clone(),
-                token_id.clone(),
-                amount.clone(),
-            )?;
-
             let pool_origin_token_balance =
                 T::MultiToken::get_balance(&token_id, &pool).ok_or(Error::<T>::EmptyPool)?;
             let pool_dest_token_balance =
                 T::MultiToken::get_balance(&corresponding_token_id, &pool)
                     .ok_or(Error::<T>::EmptyPool)?;
+
+            ensure!(
+                !pool_origin_token_balance.is_zero() && !pool_dest_token_balance.is_zero(),
+                Error::<T>::EmptyPool
+            );
 
             let partial_calculation = constant
                 .checked_div(
@@ -227,6 +227,14 @@ pub mod pallet {
             let swap_token_result = pool_dest_token_balance
                 .checked_sub(&partial_calculation)
                 .ok_or(Error::<T>::Overflow)?;
+
+            T::MultiToken::safe_transfer(
+                operator.clone(),
+                operator.clone(),
+                pool.clone(),
+                token_id.clone(),
+                amount.clone(),
+            )?;
 
             T::MultiToken::safe_transfer(
                 pool.clone(),
@@ -243,6 +251,210 @@ pub mod pallet {
                 first_asset_amount: amount,
                 second_asset: corresponding_token_id,
                 second_asset_amount: swap_token_result,
+            });
+
+            Ok(())
+        }
+
+        #[pallet::weight(1000)]
+        pub fn deposit(
+            origin: OriginFor<T>,
+            pool_address: AccountIdLookupOf<T>,
+            token_id: T::AssetId,
+            amount: T::Balance,
+        ) -> DispatchResult {
+            let operator = ensure_signed(origin)?;
+            let pool = T::Lookup::lookup(pool_address)?;
+
+            ensure!(!amount.is_zero(), Error::<T>::DepositingZeroAmount);
+            ensure!(Self::get_pool(&pool) != None, Error::<T>::NoSuchPool);
+            Self::check_balance(&token_id, &operator, amount.clone())?;
+
+            let (first_asset_id, second_asset_id, _) = Self::get_pool(&pool).unwrap();
+            let corresponding_token_id = if token_id == first_asset_id {
+                second_asset_id
+            } else if token_id == second_asset_id {
+                first_asset_id
+            } else {
+                ensure!(false, Error::<T>::NoSuchTokenInPool);
+                first_asset_id
+            };
+
+            let pool_origin_token_balance =
+                T::MultiToken::get_balance(&token_id, &pool).ok_or(Error::<T>::EmptyPool)?;
+            let pool_dest_token_balance =
+                T::MultiToken::get_balance(&corresponding_token_id, &pool)
+                    .ok_or(Error::<T>::EmptyPool)?;
+            ensure!(
+                !pool_origin_token_balance.is_zero() && !pool_dest_token_balance.is_zero(),
+                Error::<T>::EmptyPool
+            );
+
+            let corresponding_token_amount = amount
+                .checked_mul(&pool_dest_token_balance)
+                .ok_or(Error::<T>::Overflow)?
+                .checked_div(&pool_origin_token_balance)
+                .ok_or(Error::<T>::Overflow)?;
+            Self::check_balance(
+                &corresponding_token_id,
+                &operator,
+                corresponding_token_amount.clone(),
+            )?;
+
+            let current_full_share =
+                TotalPoolShares::<T>::get(&pool).ok_or(Error::<T>::NoSuchPool)?;
+            ensure!(!current_full_share.is_zero(), Error::<T>::NoSuchPool);
+            let operator_pool_share = match PoolShares::<T>::get(&pool, &operator) {
+                Some(share) => share,
+                None => Zero::zero(),
+            };
+            let add_operator_pool_share = amount
+                .checked_mul(&current_full_share)
+                .ok_or(Error::<T>::Overflow)?
+                .checked_div(&pool_origin_token_balance)
+                .ok_or(Error::<T>::Overflow)?;
+            let new_full_share = current_full_share
+                .checked_add(&add_operator_pool_share)
+                .ok_or(Error::<T>::Overflow)?;
+            let new_operator_pool_share = operator_pool_share
+                .checked_add(&add_operator_pool_share)
+                .ok_or(Error::<T>::Overflow)?;
+
+            T::MultiToken::safe_transfer(
+                operator.clone(),
+                operator.clone(),
+                pool.clone(),
+                token_id.clone(),
+                amount.clone(),
+            )?;
+
+            T::MultiToken::safe_transfer(
+                operator.clone(),
+                operator.clone(),
+                pool.clone(),
+                corresponding_token_id.clone(),
+                corresponding_token_amount.clone(),
+            )?;
+
+            let pool_origin_token_balance =
+                T::MultiToken::get_balance(&token_id, &pool).ok_or(Error::<T>::EmptyPool)?;
+            let pool_dest_token_balance =
+                T::MultiToken::get_balance(&corresponding_token_id, &pool)
+                    .ok_or(Error::<T>::EmptyPool)?;
+            let new_constant = pool_origin_token_balance
+                .checked_mul(&pool_dest_token_balance)
+                .ok_or(Error::<T>::Overflow)?;
+            Pools::<T>::set(&pool, Some((first_asset_id, second_asset_id, new_constant)));
+
+            TotalPoolShares::<T>::set(&pool, Some(new_full_share));
+            PoolShares::<T>::set(&pool, &operator, Some(new_operator_pool_share));
+
+            Self::deposit_event(Event::<T>::Deposited {
+                operator,
+                pool_account: pool,
+                first_asset: token_id,
+                first_asset_amount: amount,
+                second_asset: corresponding_token_id,
+                second_asset_amount: corresponding_token_amount,
+            });
+
+            Ok(())
+        }
+
+        #[pallet::weight(1000)]
+        pub fn withdraw(
+            origin: OriginFor<T>,
+            pool_address: AccountIdLookupOf<T>,
+            token_id: T::AssetId,
+            amount: T::Balance,
+        ) -> DispatchResult {
+            let operator = ensure_signed(origin)?;
+            let pool = T::Lookup::lookup(pool_address)?;
+
+            ensure!(!amount.is_zero(), Error::<T>::DepositingZeroAmount);
+            ensure!(Self::get_pool(&pool) != None, Error::<T>::NoSuchPool);
+
+            let (first_asset_id, second_asset_id, _) = Self::get_pool(&pool).unwrap();
+            let corresponding_token_id = if token_id == first_asset_id {
+                second_asset_id
+            } else if token_id == second_asset_id {
+                first_asset_id
+            } else {
+                ensure!(false, Error::<T>::NoSuchTokenInPool);
+                first_asset_id
+            };
+
+            let pool_origin_token_balance =
+                T::MultiToken::get_balance(&token_id, &pool).ok_or(Error::<T>::EmptyPool)?;
+            let pool_dest_token_balance =
+                T::MultiToken::get_balance(&corresponding_token_id, &pool)
+                    .ok_or(Error::<T>::EmptyPool)?;
+            ensure!(
+                !pool_origin_token_balance.is_zero() && !pool_dest_token_balance.is_zero(),
+                Error::<T>::EmptyPool
+            );
+
+            let corresponding_token_amount = amount
+                .checked_mul(&pool_dest_token_balance)
+                .ok_or(Error::<T>::Overflow)?
+                .checked_div(&pool_origin_token_balance)
+                .ok_or(Error::<T>::Overflow)?;
+
+            let current_full_share =
+                TotalPoolShares::<T>::get(&pool).ok_or(Error::<T>::NoSuchPool)?;
+            ensure!(!current_full_share.is_zero(), Error::<T>::NoSuchPool);
+            let operator_pool_share = match PoolShares::<T>::get(&pool, &operator) {
+                Some(share) => share,
+                None => Zero::zero(),
+            };
+            let sub_operator_pool_share = amount
+                .checked_mul(&current_full_share)
+                .ok_or(Error::<T>::Overflow)?
+                .checked_div(&pool_origin_token_balance)
+                .ok_or(Error::<T>::Overflow)?;
+            let new_full_share = current_full_share
+                .checked_sub(&sub_operator_pool_share)
+                .ok_or(Error::<T>::Overflow)?;
+            let new_operator_pool_share = operator_pool_share
+                .checked_sub(&sub_operator_pool_share)
+                .ok_or(Error::<T>::Overflow)?;
+
+            TotalPoolShares::<T>::set(&pool, Some(new_full_share));
+            PoolShares::<T>::set(&pool, &operator, Some(new_operator_pool_share));
+
+            T::MultiToken::safe_transfer(
+                pool.clone(),
+                pool.clone(),
+                operator.clone(),
+                token_id.clone(),
+                amount.clone(),
+            )?;
+
+            T::MultiToken::safe_transfer(
+                pool.clone(),
+                pool.clone(),
+                operator.clone(),
+                corresponding_token_id.clone(),
+                corresponding_token_amount.clone(),
+            )?;
+
+            let pool_origin_token_balance =
+                T::MultiToken::get_balance(&token_id, &pool).ok_or(Error::<T>::EmptyPool)?;
+            let pool_dest_token_balance =
+                T::MultiToken::get_balance(&corresponding_token_id, &pool)
+                    .ok_or(Error::<T>::EmptyPool)?;
+            let new_constant = pool_origin_token_balance
+                .checked_mul(&pool_dest_token_balance)
+                .ok_or(Error::<T>::Overflow)?;
+            Pools::<T>::set(&pool, Some((first_asset_id, second_asset_id, new_constant)));
+
+            Self::deposit_event(Event::<T>::Withdrawed {
+                operator,
+                pool_account: pool,
+                first_asset: token_id,
+                first_asset_amount: amount,
+                second_asset: corresponding_token_id,
+                second_asset_amount: corresponding_token_amount,
             });
 
             Ok(())
