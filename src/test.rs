@@ -246,3 +246,49 @@ fn withdrawing_more_liquidity_than_in_the_pool() {
         );
     });
 }
+
+#[test]
+fn deposit_one_asset() {
+    new_test_ext().execute_with(|| {
+        assert_ok!(MultiTokenPallet::create(Origin::signed(1)));
+        assert_ok!(MultiTokenPallet::mint(Origin::signed(1), 0, 100000000));
+        assert_ok!(MultiTokenPallet::create(Origin::signed(1)));
+        assert_ok!(MultiTokenPallet::mint(Origin::signed(1), 1, 100000000));
+        assert_ok!(MultiTokenPallet::transfer(Origin::signed(1), 1, 2, 0, 10000000));
+        assert_ok!(MultiTokenPallet::transfer(Origin::signed(1), 1, 2, 1, 10000000));
+        assert_ok!(Dex::init(Origin::signed(1), 314159265, 0, 50000, 1, 50000000));
+        assert_ok!(Dex::deposit_one_asset(Origin::signed(2), 314159265, 0, 10000000));
+
+        // Note, even though the balance should be 0, it is not because there is a swap fee
+        // This amount would become negligible as swap fee aproaches 0
+        assert_eq!(MultiTokenPallet::get_balance(&0, &2), Some(382199)); 
+        assert_eq!(MultiTokenPallet::get_balance(&1, &2), Some(10000000));
+        println!("{}", MultiTokenPallet::get_balance(&0, &314159265).unwrap());
+        println!("{}", MultiTokenPallet::get_balance(&1, &314159265).unwrap());
+    });
+}
+
+#[test]
+fn withdrawing_one_asset() {
+    new_test_ext().execute_with(|| {
+        assert_ok!(MultiTokenPallet::create(Origin::signed(1)));
+        assert_ok!(MultiTokenPallet::mint(Origin::signed(1), 0, 100000000));
+        assert_ok!(MultiTokenPallet::create(Origin::signed(1)));
+        assert_ok!(MultiTokenPallet::mint(Origin::signed(1), 1, 100000000));
+        assert_ok!(MultiTokenPallet::transfer(Origin::signed(1), 1, 2, 0, 10000000));
+        assert_ok!(MultiTokenPallet::transfer(Origin::signed(1), 1, 2, 1, 10000000));
+        assert_ok!(Dex::init(Origin::signed(1), 314159265, 0, 50000000, 1, 50000000));
+        assert_ok!(Dex::deposit(Origin::signed(2), 314159265, 0, 10000000));
+        assert_ok!(Dex::withdraw_one_asset(Origin::signed(2), 314159265, 0, 1000000));
+
+        println!("{}", MultiTokenPallet::get_balance(&0, &2).unwrap());
+        println!("{}", MultiTokenPallet::get_balance(&1, &2).unwrap());
+
+        // Note, even though we made a request of withdrawal for 1000000, we receive 0.15% less
+        // This happens because of the swap fee
+        // As swap fee aproaches 0, the balance would aproach requested amonut
+        assert_eq!(MultiTokenPallet::get_balance(&0, &2), Some(998507)); 
+        assert_eq!(MultiTokenPallet::get_balance(&1, &2), Some(0));
+        
+    });
+}
