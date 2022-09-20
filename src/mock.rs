@@ -1,5 +1,5 @@
 use crate as pallet_dex;
-use frame_support::traits::{ConstU16, ConstU64, ConstU128};
+use frame_support::traits::{ConstU128, ConstU16, ConstU64};
 use frame_system as system;
 use sp_core::H256;
 use sp_runtime::{
@@ -62,6 +62,8 @@ impl pallet_dex::Config for Test {
     type Balance = u128;
     type DefaultShare = ConstU128<10000>;
     type MultiToken = MultiTokenPallet;
+    type HundredPercentMinusFee = ConstU128<997>;
+    type HundredPercent = ConstU128<1000>;
 }
 
 // Build genesis storage according to the mock runtime.

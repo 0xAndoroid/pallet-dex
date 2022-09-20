@@ -30,7 +30,8 @@ fn swap_tokens() {
         assert_ok!(Dex::swap_token(Origin::signed(2), 314159265, 0, 10));
 
         assert_eq!(MultiTokenPallet::get_balance(&0, &2), Some(0));
-        assert_eq!(MultiTokenPallet::get_balance(&1, &2), Some(9));
+        // One token was used as slippage, another one as fee
+        assert_eq!(MultiTokenPallet::get_balance(&1, &2), Some(8));
     });
 }
 
@@ -94,15 +95,42 @@ fn abuse_without_tokens() {
         assert_ok!(MultiTokenPallet::mint(Origin::signed(1), 0, 11000));
         assert_ok!(MultiTokenPallet::create(Origin::signed(1)));
         assert_ok!(MultiTokenPallet::mint(Origin::signed(1), 1, 10100));
-        assert_ok!(MultiTokenPallet::transfer(Origin::signed(1), 1, 2, 0, 10000));
-        assert_ok!(MultiTokenPallet::transfer(Origin::signed(1), 1, 2, 1, 10000));
-        assert_noop!(Dex::init(Origin::signed(1), 314159265, 0, 500, 1, 500), Error::<Test>::NotEnoughBalance);
+        assert_ok!(MultiTokenPallet::transfer(
+            Origin::signed(1),
+            1,
+            2,
+            0,
+            10000
+        ));
+        assert_ok!(MultiTokenPallet::transfer(
+            Origin::signed(1),
+            1,
+            2,
+            1,
+            10000
+        ));
+        assert_noop!(
+            Dex::init(Origin::signed(1), 314159265, 0, 500, 1, 500),
+            Error::<Test>::NotEnoughBalance
+        );
         assert_ok!(Dex::init(Origin::signed(1), 314159265, 0, 50, 1, 50));
-        assert_noop!(Dex::swap_token(Origin::signed(1), 314159265, 1, 500), Error::<Test>::NotEnoughBalance);
-        assert_noop!(Dex::deposit(Origin::signed(1), 314159265, 1, 500), Error::<Test>::NotEnoughBalance);
+        assert_noop!(
+            Dex::swap_token(Origin::signed(1), 314159265, 1, 500),
+            Error::<Test>::NotEnoughBalance
+        );
+        assert_noop!(
+            Dex::deposit(Origin::signed(1), 314159265, 1, 500),
+            Error::<Test>::NotEnoughBalance
+        );
         assert_ok!(Dex::deposit(Origin::signed(2), 314159265, 0, 10000));
-        assert_noop!(Dex::withdraw(Origin::signed(1), 314159265, 1, 500), Error::<Test>::Overflow);
-        assert_noop!(Dex::withdraw(Origin::signed(1), 314159265, 1, 51), Error::<Test>::Overflow);
+        assert_noop!(
+            Dex::withdraw(Origin::signed(1), 314159265, 1, 500),
+            Error::<Test>::Overflow
+        );
+        assert_noop!(
+            Dex::withdraw(Origin::signed(1), 314159265, 1, 51),
+            Error::<Test>::Overflow
+        );
         assert_ok!(Dex::withdraw(Origin::signed(1), 314159265, 1, 50));
     });
 }
@@ -110,7 +138,10 @@ fn abuse_without_tokens() {
 #[test]
 fn using_uninitialized_pool() {
     new_test_ext().execute_with(|| {
-        assert_noop!(Dex::swap_token(Origin::signed(2), 314159265, 0, 10), Error::<Test>::NoSuchPool);
+        assert_noop!(
+            Dex::swap_token(Origin::signed(2), 314159265, 0, 10),
+            Error::<Test>::NoSuchPool
+        );
     });
 }
 
@@ -121,10 +152,79 @@ fn zero_amounts() {
         assert_ok!(MultiTokenPallet::mint(Origin::signed(1), 0, 100));
         assert_ok!(MultiTokenPallet::create(Origin::signed(1)));
         assert_ok!(MultiTokenPallet::mint(Origin::signed(1), 1, 100));
-        assert_noop!(Dex::init(Origin::signed(1), 314159265, 0, 0, 1, 50), Error::<Test>::DepositingZeroAmount);
+        assert_noop!(
+            Dex::init(Origin::signed(1), 314159265, 0, 0, 1, 50),
+            Error::<Test>::DepositingZeroAmount
+        );
         assert_ok!(Dex::init(Origin::signed(1), 314159265, 0, 50, 1, 50));
-        assert_noop!(Dex::swap_token(Origin::signed(1), 314159265, 1, 0), Error::<Test>::DepositingZeroAmount);
-        assert_noop!(Dex::deposit(Origin::signed(1), 314159265, 1, 0), Error::<Test>::DepositingZeroAmount);
-        assert_noop!(Dex::withdraw(Origin::signed(1), 314159265, 1, 0), Error::<Test>::WithdrawingZeroAmount);
+        assert_noop!(
+            Dex::swap_token(Origin::signed(1), 314159265, 1, 0),
+            Error::<Test>::DepositingZeroAmount
+        );
+        assert_noop!(
+            Dex::deposit(Origin::signed(1), 314159265, 1, 0),
+            Error::<Test>::DepositingZeroAmount
+        );
+        assert_noop!(
+            Dex::withdraw(Origin::signed(1), 314159265, 1, 0),
+            Error::<Test>::WithdrawingZeroAmount
+        );
+    });
+}
+
+
+#[test]
+fn creating_existing_pool() {
+    new_test_ext().execute_with(|| {
+        assert_ok!(MultiTokenPallet::create(Origin::signed(1)));
+        assert_ok!(MultiTokenPallet::mint(Origin::signed(1), 0, 100));
+        assert_ok!(MultiTokenPallet::create(Origin::signed(1)));
+        assert_ok!(MultiTokenPallet::mint(Origin::signed(1), 1, 100));
+        assert_ok!(Dex::init(Origin::signed(1), 314159265, 0, 50, 1, 50));
+        assert_noop!(
+            Dex::init(Origin::signed(1), 314159265, 0, 50, 1, 50), 
+            Error::<Test>::PoolAlreadyExists
+        );
+    });
+}
+
+#[test]
+fn depositing_token_that_is_not_in_pool() {
+    new_test_ext().execute_with(|| {
+        assert_ok!(MultiTokenPallet::create(Origin::signed(1)));
+        assert_ok!(MultiTokenPallet::mint(Origin::signed(1), 0, 100));
+        assert_ok!(MultiTokenPallet::create(Origin::signed(1)));
+        assert_ok!(MultiTokenPallet::mint(Origin::signed(1), 1, 100));
+        assert_ok!(MultiTokenPallet::create(Origin::signed(1)));
+        assert_ok!(MultiTokenPallet::mint(Origin::signed(1), 2, 100));
+        assert_ok!(Dex::init(Origin::signed(1), 314159265, 0, 50, 1, 50));
+        assert_noop!(
+            Dex::swap_token(Origin::signed(1), 314159265, 2, 50),
+            Error::<Test>::NoSuchTokenInPool
+        );
+        assert_noop!(
+            Dex::deposit(Origin::signed(1), 314159265, 2, 50),
+            Error::<Test>::NoSuchTokenInPool
+        );
+        assert_noop!(
+            Dex::withdraw(Origin::signed(1), 314159265, 2, 50),
+            Error::<Test>::NoSuchTokenInPool
+        );
+    });
+}
+
+#[test]
+fn depositing_assets_into_dead_pool() {
+    new_test_ext().execute_with(|| {
+        assert_ok!(MultiTokenPallet::create(Origin::signed(1)));
+        assert_ok!(MultiTokenPallet::mint(Origin::signed(1), 0, 100));
+        assert_ok!(MultiTokenPallet::create(Origin::signed(1)));
+        assert_ok!(MultiTokenPallet::mint(Origin::signed(1), 1, 100));
+        assert_ok!(Dex::init(Origin::signed(1), 314159265, 0, 50, 1, 50));
+        assert_ok!(Dex::withdraw(Origin::signed(1), 314159265, 0, 50));
+        assert_noop!(
+            Dex::deposit(Origin::signed(1), 314159265, 0, 50),
+            Error::<Test>::EmptyPool
+        );
     });
 }

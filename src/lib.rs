@@ -51,6 +51,12 @@ pub mod pallet {
         #[pallet::constant]
         type DefaultShare: Get<Self::Balance>;
 
+        #[pallet::constant]
+        type HundredPercentMinusFee: Get<Self::Balance>;
+
+        #[pallet::constant]
+        type HundredPercent: Get<Self::Balance>;
+
         type MultiToken: MultiTokenTrait<Self, Self::AssetId, Self::Balance>;
     }
 
@@ -75,7 +81,7 @@ pub mod pallet {
     >;
 
     #[pallet::storage]
-	#[pallet::getter(fn get_total_pool_shares)]
+    #[pallet::getter(fn get_total_pool_shares)]
     pub type TotalPoolShares<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, T::Balance>;
 
     #[pallet::event]
@@ -123,7 +129,7 @@ pub mod pallet {
         NotEnoughBalance,
         NoSuchTokenInPool,
         EmptyPool,
-		SameAssetPool
+        SameAssetPool,
     }
 
     #[pallet::call]
@@ -145,7 +151,7 @@ pub mod pallet {
                 Error::<T>::DepositingZeroAmount
             );
             ensure!(Self::get_pool(&pool) == None, Error::<T>::PoolAlreadyExists);
-			ensure!(first_token_id != second_token_id, Error::<T>::SameAssetPool);
+            ensure!(first_token_id != second_token_id, Error::<T>::SameAssetPool);
             Self::check_balance(&first_token_id, &creator, first_token_amount.clone())?;
             Self::check_balance(&second_token_id, &creator, second_token_amount.clone())?;
 
@@ -197,7 +203,7 @@ pub mod pallet {
             ensure!(Self::get_pool(&pool) != None, Error::<T>::NoSuchPool);
             Self::check_balance(&token_id, &operator, amount.clone())?;
 
-            // We have already checked that pool exists
+            // We have already checked that pool exists, unwrap is safe
             let (first_asset_id, second_asset_id, constant) = Self::get_pool(&pool).unwrap();
             let corresponding_token_id = if token_id == first_asset_id {
                 second_asset_id
@@ -228,6 +234,10 @@ pub mod pallet {
                 .ok_or(Error::<T>::Overflow)?;
             let swap_token_result = pool_dest_token_balance
                 .checked_sub(&partial_calculation)
+                .ok_or(Error::<T>::Overflow)?
+                .checked_mul(&T::HundredPercentMinusFee::get())
+                .ok_or(Error::<T>::Overflow)?
+                .checked_div(&T::HundredPercent::get())
                 .ok_or(Error::<T>::Overflow)?;
 
             T::MultiToken::safe_transfer(
@@ -464,6 +474,7 @@ pub mod pallet {
     }
 
     impl<T: Config> Pallet<T> {
+        // Checks if there is enoguh tokens on users balance
         fn check_balance(
             id: &T::AssetId,
             account: &T::AccountId,
