@@ -1,4 +1,5 @@
-use frame_support::traits::{ConstU16, ConstU64};
+use crate as pallet_dex;
+use frame_support::traits::{ConstU16, ConstU64, ConstU128};
 use frame_system as system;
 use sp_core::H256;
 use sp_runtime::{
@@ -17,6 +18,8 @@ frame_support::construct_runtime!(
         UncheckedExtrinsic = UncheckedExtrinsic,
     {
         System: frame_system,
+        MultiTokenPallet: pallet_multi_token,
+        Dex: pallet_dex,
     }
 );
 
@@ -45,6 +48,20 @@ impl system::Config for Test {
     type SS58Prefix = ConstU16<42>;
     type OnSetCode = ();
     type MaxConsumers = frame_support::traits::ConstU32<16>;
+}
+
+impl pallet_multi_token::Config for Test {
+    type Event = Event;
+    type AssetId = u64;
+    type Balance = u128;
+}
+
+impl pallet_dex::Config for Test {
+    type Event = Event;
+    type AssetId = u64;
+    type Balance = u128;
+    type DefaultShare = ConstU128<10000>;
+    type MultiToken = MultiTokenPallet;
 }
 
 // Build genesis storage according to the mock runtime.

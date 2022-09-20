@@ -6,6 +6,8 @@ pub mod mock;
 #[cfg(test)]
 mod test;
 
+pub use pallet::*;
+
 type AccountIdLookupOf<T> = <<T as frame_system::Config>::Lookup as StaticLookup>::Source;
 
 #[frame_support::pallet]
@@ -49,9 +51,6 @@ pub mod pallet {
         #[pallet::constant]
         type DefaultShare: Get<Self::Balance>;
 
-        #[pallet::constant]
-        type MaxShare: Get<Self::Balance>;
-
         type MultiToken: MultiTokenTrait<Self, Self::AssetId, Self::Balance>;
     }
 
@@ -76,6 +75,7 @@ pub mod pallet {
     >;
 
     #[pallet::storage]
+	#[pallet::getter(fn get_total_pool_shares)]
     pub type TotalPoolShares<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, T::Balance>;
 
     #[pallet::event]
@@ -123,6 +123,7 @@ pub mod pallet {
         NotEnoughBalance,
         NoSuchTokenInPool,
         EmptyPool,
+		SameAssetPool
     }
 
     #[pallet::call]
@@ -144,6 +145,7 @@ pub mod pallet {
                 Error::<T>::DepositingZeroAmount
             );
             ensure!(Self::get_pool(&pool) == None, Error::<T>::PoolAlreadyExists);
+			ensure!(first_token_id != second_token_id, Error::<T>::SameAssetPool);
             Self::check_balance(&first_token_id, &creator, first_token_amount.clone())?;
             Self::check_balance(&second_token_id, &creator, second_token_amount.clone())?;
 
@@ -371,7 +373,7 @@ pub mod pallet {
             let operator = ensure_signed(origin)?;
             let pool = T::Lookup::lookup(pool_address)?;
 
-            ensure!(!amount.is_zero(), Error::<T>::DepositingZeroAmount);
+            ensure!(!amount.is_zero(), Error::<T>::WithdrawingZeroAmount);
             ensure!(Self::get_pool(&pool) != None, Error::<T>::NoSuchPool);
 
             let (first_asset_id, second_asset_id, _) = Self::get_pool(&pool).unwrap();
@@ -469,7 +471,7 @@ pub mod pallet {
         ) -> Result<(), Error<T>> {
             match T::MultiToken::get_balance(id, account) {
                 Some(balance) => {
-                    ensure!(needed_balace >= balance, Error::<T>::NotEnoughBalance);
+                    ensure!(needed_balace <= balance, Error::<T>::NotEnoughBalance);
                 }
                 None => {
                     return Err(Error::<T>::NotEnoughBalance);
