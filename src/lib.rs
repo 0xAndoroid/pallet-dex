@@ -18,7 +18,7 @@ pub mod pallet {
     use frame_system::pallet_prelude::*;
     use pallet_multi_token::multi_token::MultiTokenTrait;
     use sp_runtime::traits::{AtLeast32BitUnsigned, Zero};
-    use sp_runtime::traits::{CheckedAdd, CheckedDiv, CheckedMul, CheckedSub};
+    use sp_runtime::traits::{CheckedAdd, CheckedDiv, CheckedMul, CheckedSub, IntegerSquareRoot};
 
     #[pallet::pallet]
     #[pallet::generate_store(pub(super) trait Store)]
@@ -28,6 +28,8 @@ pub mod pallet {
     pub trait Config: frame_system::Config {
         type Event: From<Event<Self>> + IsType<<Self as frame_system::Config>::Event>;
 
+        // A number-like type which is used to store balances, shares of the pool and fees
+        // Assumed to be the same one as the pallet_multi_token uses
         type Balance: Member
             + Parameter
             + AtLeast32BitUnsigned
@@ -37,6 +39,8 @@ pub mod pallet {
             + MaxEncodedLen
             + TypeInfo;
 
+        // A number-like type which is used to store id of an asset
+        // Assumed to be the same one as the pallet_multi_token uses
         type AssetId: Member
             + Parameter
             + AtLeast32BitUnsigned
@@ -48,14 +52,17 @@ pub mod pallet {
             + TypeInfo
             + Zero;
 
+        // A share that is assigned to a pool creator
         #[pallet::constant]
         type DefaultShare: Get<Self::Balance>;
 
-        #[pallet::constant]
-        type HundredPercentMinusFee: Get<Self::Balance>;
-
+        // A constant of hundred percent mark (for fees)
         #[pallet::constant]
         type HundredPercent: Get<Self::Balance>;
+        
+        // A constant of hundred percent minus a fee mark
+        #[pallet::constant]
+        type HundredPercentMinusFee: Get<Self::Balance>;
 
         type MultiToken: MultiTokenTrait<Self, Self::AssetId, Self::Balance>;
     }
@@ -121,14 +128,23 @@ pub mod pallet {
 
     #[pallet::error]
     pub enum Error<T> {
+        // An arithmetic overflow
         Overflow,
+        // Depositing 0 amount for init, swap or deposit functions
         DepositingZeroAmount,
+        // Trying to withdraw 0 amount from the pool
         WithdrawingZeroAmount,
+        // Trying to initialize pool with an address that already exists
         PoolAlreadyExists,
+        // Trying to interact with a pool that does not exist
         NoSuchPool,
+        // There is not enough balance to perform operation
         NotEnoughBalance,
+        // Trying to deposit/withdraw wrong asset into the pool
         NoSuchTokenInPool,
+        // The pool is dead, no assets in the pool
         EmptyPool,
+        // Initialization of the pool with both assets being same
         SameAssetPool,
     }
 
@@ -199,6 +215,189 @@ pub mod pallet {
             let operator = ensure_signed(origin)?;
             let pool = T::Lookup::lookup(pool_address)?;
 
+            Self::swap(operator, pool, token_id, amount)?;
+            Ok(())
+        }
+
+        #[pallet::weight(1000)]
+        pub fn deposit(
+            origin: OriginFor<T>,
+            pool_address: AccountIdLookupOf<T>,
+            token_id: T::AssetId,
+            amount: T::Balance,
+        ) -> DispatchResult {
+            let operator = ensure_signed(origin)?;
+            let pool = T::Lookup::lookup(pool_address)?;
+
+            Self::dep(operator, pool, token_id, amount)
+        }
+
+        #[pallet::weight(1000)]
+        pub fn withdraw(
+            origin: OriginFor<T>,
+            pool_address: AccountIdLookupOf<T>,
+            token_id: T::AssetId,
+            amount: T::Balance,
+        ) -> DispatchResult {
+            let operator = ensure_signed(origin)?;
+            let pool = T::Lookup::lookup(pool_address)?;
+
+            Self::with(operator, pool, token_id, amount)?;
+            Ok(())
+        }
+
+        #[pallet::weight(1000)]
+        pub fn deposit_one_asset(
+            origin: OriginFor<T>,
+            pool_address: AccountIdLookupOf<T>,
+            token_id: T::AssetId,
+            amount: T::Balance,
+        ) -> DispatchResult {
+            let operator = ensure_signed(origin)?;
+            let pool = T::Lookup::lookup(pool_address)?;
+
+            ensure!(!amount.is_zero(), Error::<T>::DepositingZeroAmount);
+            ensure!(Self::get_pool(&pool) != None, Error::<T>::NoSuchPool);
+            Self::check_balance(&token_id, &operator, amount.clone())?;
+
+            // We have already checked that pool exists, unwrap is safe
+            let (first_asset_id, second_asset_id, _) = Self::get_pool(&pool).unwrap();
+            let corresponding_token_id = if token_id == first_asset_id {
+                second_asset_id
+            } else if token_id == second_asset_id {
+                first_asset_id
+            } else {
+                ensure!(false, Error::<T>::NoSuchTokenInPool);
+                first_asset_id
+            };
+
+            // x
+            let pool_origin_token_balance =
+                T::MultiToken::get_balance(&token_id, &pool).ok_or(Error::<T>::EmptyPool)?;
+            // y
+            let pool_dest_token_balance =
+                T::MultiToken::get_balance(&corresponding_token_id, &pool)
+                    .ok_or(Error::<T>::EmptyPool)?;
+                    
+            ensure!(
+                !pool_origin_token_balance.is_zero() && !pool_dest_token_balance.is_zero(),
+                Error::<T>::EmptyPool
+            );
+
+            // Calculation of the amount that needs to be swapped
+            let partial_result = pool_origin_token_balance
+                .checked_mul(&pool_origin_token_balance)
+                .ok_or(Error::<T>::Overflow)?
+                .checked_add(
+                    &pool_origin_token_balance
+                        .checked_mul(&amount)
+                        .ok_or(Error::<T>::Overflow)?
+                )
+                .ok_or(Error::<T>::Overflow)?;
+            let sqrt = partial_result.integer_sqrt();
+            let to_swap_amount = sqrt
+                .checked_sub(&pool_origin_token_balance)
+                .ok_or(Error::<T>::Overflow)?
+                .checked_mul(&T::HundredPercent::get())
+                .ok_or(Error::<T>::Overflow)?
+                .checked_div(&T::HundredPercentMinusFee::get())
+                .ok_or(Error::<T>::Overflow)?;
+
+            let received_after_swap = Self::swap(operator.clone(), pool.clone(), token_id.clone(), to_swap_amount.clone())?;
+
+            Self::dep(operator, pool, corresponding_token_id, received_after_swap)?;
+
+            Ok(())
+        }
+
+        #[pallet::weight(1000)]
+        pub fn withdraw_one_asset(
+            origin: OriginFor<T>,
+            pool_address: AccountIdLookupOf<T>,
+            token_id: T::AssetId,
+            amount: T::Balance,
+        ) -> DispatchResult {
+            let operator = ensure_signed(origin)?;
+            let pool = T::Lookup::lookup(pool_address)?;
+
+            ensure!(!amount.is_zero(), Error::<T>::DepositingZeroAmount);
+            ensure!(Self::get_pool(&pool) != None, Error::<T>::NoSuchPool);
+            Self::check_balance(&token_id, &operator, amount.clone())?;
+
+            // We have already checked that pool exists, unwrap is safe
+            let (first_asset_id, second_asset_id, _) = Self::get_pool(&pool).unwrap();
+            let corresponding_token_id = if token_id == first_asset_id {
+                second_asset_id
+            } else if token_id == second_asset_id {
+                first_asset_id
+            } else {
+                ensure!(false, Error::<T>::NoSuchTokenInPool);
+                first_asset_id
+            };
+
+            // x
+            let pool_origin_token_balance =
+                T::MultiToken::get_balance(&token_id, &pool).ok_or(Error::<T>::EmptyPool)?;
+            // y
+            let pool_dest_token_balance =
+                T::MultiToken::get_balance(&corresponding_token_id, &pool)
+                    .ok_or(Error::<T>::EmptyPool)?;
+                    
+            ensure!(
+                !pool_origin_token_balance.is_zero() && !pool_dest_token_balance.is_zero(),
+                Error::<T>::EmptyPool
+            );
+            ensure!(
+                pool_origin_token_balance >= amount,
+                Error::<T>::Overflow
+            );
+
+            let partial_result = pool_origin_token_balance
+                .checked_mul(&pool_origin_token_balance)
+                .ok_or(Error::<T>::Overflow)?
+                .checked_sub(
+                    &pool_origin_token_balance
+                        .checked_mul(&amount)
+                        .ok_or(Error::<T>::Overflow)?
+                )
+                .ok_or(Error::<T>::Overflow)?;
+            let sqrt = partial_result.integer_sqrt();
+            let to_withdraw_amount = sqrt
+                .checked_add(&pool_origin_token_balance)
+                .ok_or(Error::<T>::Overflow)?;
+            
+            let withdrawn_of_corresponding_token = Self::with(operator.clone(), pool.clone(), token_id.clone(), to_withdraw_amount)?;
+
+            Self::swap(operator, pool, corresponding_token_id, withdrawn_of_corresponding_token)?;
+            
+            Ok(())
+        }
+    }
+
+    impl<T: Config> Pallet<T> {
+        // Checks if there is enoguh tokens on users balance
+        fn check_balance(
+            id: &T::AssetId,
+            account: &T::AccountId,
+            needed_balace: T::Balance,
+        ) -> Result<(), Error<T>> {
+            match T::MultiToken::get_balance(id, account) {
+                Some(balance) => {
+                    ensure!(needed_balace <= balance, Error::<T>::NotEnoughBalance);
+                }
+                None => {
+                    return Err(Error::<T>::NotEnoughBalance);
+                }
+            }
+            Ok(())
+        }
+
+        fn swap(
+            operator: T::AccountId,
+            pool: T::AccountId,
+            token_id: T::AssetId,
+            amount: T::Balance,
+        ) -> Result<T::Balance, DispatchError> {
             ensure!(!amount.is_zero(), Error::<T>::DepositingZeroAmount);
             ensure!(Self::get_pool(&pool) != None, Error::<T>::NoSuchPool);
             Self::check_balance(&token_id, &operator, amount.clone())?;
@@ -262,22 +461,18 @@ pub mod pallet {
                 first_asset: first_asset_id,
                 first_asset_amount: amount,
                 second_asset: corresponding_token_id,
-                second_asset_amount: swap_token_result,
+                second_asset_amount: swap_token_result.clone(),
             });
 
-            Ok(())
+            Ok(swap_token_result)
         }
 
-        #[pallet::weight(1000)]
-        pub fn deposit(
-            origin: OriginFor<T>,
-            pool_address: AccountIdLookupOf<T>,
+        fn dep(
+            operator: T::AccountId,
+            pool: T::AccountId,
             token_id: T::AssetId,
             amount: T::Balance,
         ) -> DispatchResult {
-            let operator = ensure_signed(origin)?;
-            let pool = T::Lookup::lookup(pool_address)?;
-
             ensure!(!amount.is_zero(), Error::<T>::DepositingZeroAmount);
             ensure!(Self::get_pool(&pool) != None, Error::<T>::NoSuchPool);
             Self::check_balance(&token_id, &operator, amount.clone())?;
@@ -373,16 +568,13 @@ pub mod pallet {
             Ok(())
         }
 
-        #[pallet::weight(1000)]
-        pub fn withdraw(
-            origin: OriginFor<T>,
-            pool_address: AccountIdLookupOf<T>,
+        // Returns the amount of corresponding tokens that has been withdrawn 
+        fn with(
+            operator: T::AccountId,
+            pool: T::AccountId,
             token_id: T::AssetId,
             amount: T::Balance,
-        ) -> DispatchResult {
-            let operator = ensure_signed(origin)?;
-            let pool = T::Lookup::lookup(pool_address)?;
-
+        )  -> Result<T::Balance, DispatchError> {
             ensure!(!amount.is_zero(), Error::<T>::WithdrawingZeroAmount);
             ensure!(Self::get_pool(&pool) != None, Error::<T>::NoSuchPool);
 
@@ -466,29 +658,10 @@ pub mod pallet {
                 first_asset: token_id,
                 first_asset_amount: amount,
                 second_asset: corresponding_token_id,
-                second_asset_amount: corresponding_token_amount,
+                second_asset_amount: corresponding_token_amount.clone(),
             });
 
-            Ok(())
-        }
-    }
-
-    impl<T: Config> Pallet<T> {
-        // Checks if there is enoguh tokens on users balance
-        fn check_balance(
-            id: &T::AssetId,
-            account: &T::AccountId,
-            needed_balace: T::Balance,
-        ) -> Result<(), Error<T>> {
-            match T::MultiToken::get_balance(id, account) {
-                Some(balance) => {
-                    ensure!(needed_balace <= balance, Error::<T>::NotEnoughBalance);
-                }
-                None => {
-                    return Err(Error::<T>::NotEnoughBalance);
-                }
-            }
-            Ok(())
+            Ok(corresponding_token_amount)
         }
     }
 }

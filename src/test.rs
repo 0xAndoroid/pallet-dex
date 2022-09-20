@@ -228,3 +228,21 @@ fn depositing_assets_into_dead_pool() {
         );
     });
 }
+
+#[test]
+fn withdrawing_more_liquidity_than_in_the_pool() {
+    new_test_ext().execute_with(|| {
+        assert_ok!(MultiTokenPallet::create(Origin::signed(1)));
+        assert_ok!(MultiTokenPallet::mint(Origin::signed(1), 0, 1000));
+        assert_ok!(MultiTokenPallet::create(Origin::signed(1)));
+        assert_ok!(MultiTokenPallet::mint(Origin::signed(1), 1, 1000));
+        assert_ok!(MultiTokenPallet::transfer(Origin::signed(1), 1, 2, 0, 900));
+        assert_ok!(MultiTokenPallet::transfer(Origin::signed(1), 1, 2, 1, 900));
+        assert_ok!(Dex::init(Origin::signed(1), 314159265, 0, 50, 1, 50));
+        assert_ok!(Dex::deposit(Origin::signed(2), 314159265, 0, 900));
+        assert_noop!(
+            Dex::withdraw(Origin::signed(1), 314159265, 0, 500), 
+            Error::<Test>::Overflow
+        );
+    });
+}
