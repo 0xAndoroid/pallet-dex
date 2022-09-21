@@ -99,7 +99,7 @@ After we deposit all our tokens into the pool, the pool would have
 $x+t$ tokens A and $y$ tokens B.  
 Since the ratio of our deposit is the same as ratio of tokens in the pool, the following statement is true.  
 ${t-p_0 \over q_0} = {x+t \over y}$  
-Solving the two systems above, we get our formula for $p_0$ mentioned above.
+Solving the two equations above, we get our formula for $p_0$ mentioned above.
 ### Withdrawals
 The process of withdrawing only one asset is the reverse of depositing. Firstly we withdraw, and then we swap. The formula for the amount of token A to be withdrawn is similar too $p_0=x-\sqrt{x^2-xt}$. Proof is very similar too.
 
@@ -140,7 +140,7 @@ Currently there is no mechanism for dead pools to be deleted from the memory whi
 - Take a minimum balance in blockchain's native token for pool to be alive
 
 ### Making default pool share
-If a default pool share becomes too small, users who deposit small amounts of tokens would have 0 pool share, so it is important to set default pool share to some mid value. For example if `Config::Balance` is `u128`, it would be reasonable to use `u32.MAX` as a default pool share.
+If a default pool share becomes too small, users who deposit small amounts of tokens would have 0 pool share, so it is important to set default pool share to some mid value. For example if `Config::Balance` is `u128`, it would be reasonable to use `u32::MAX` as a default pool share.
 But a pool creator can deposit some large amount of tokens, assigning default pool share to this large amount of tokens, and then withdrawing almost all liquidity. This would change default pool share of this pool to a relatively small number that can create issue described above.  
 It might be reasonable to note community not to deposit liquidity into 'broken' pool, if one is created. Another good idea is to make default pool share dependent on the amount of tokens that user deposits and leaves in the pool, but this requires more complicated Config.
 
