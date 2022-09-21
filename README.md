@@ -131,7 +131,16 @@ Depositing wolud make some amount to remain in user's balance and while withdraw
 
 I decided to ignore this issue, because after all these functions are more of a convinience to a user rather than essential thing. Implementing second solution would make it less convenient.
 
+### Storing dead pools
+Currently there is no mechanism for dead pools to be deleted from the memory which could result in runtime memory being wasted. The possible solutions would be to
+- Remove dead pools from the memory
+- Add mechanism to revive a pool
+- Take a minimum balance in blockchain's native token for pool to be alive
+
 ### Making default pool share
 If a default pool share becomes too small, users who deposit small amounts of tokens would have 0 pool share, so it is important to set default pool share to some mid value. For example if `Config::Balance` is `u128`, it would be reasonable to use `u32.MAX` as a default pool share.
 But a pool creator can deposit some large amount of tokens, assigning default pool share to this large amount of tokens, and then withdrawing almost all liquidity. This would change default pool share of this pool to a relatively small number that can create issue described above.  
 It might be reasonable to note community not to deposit liquidity into 'broken' pool, if one is created. Another good idea is to make default pool share dependent on the amount of tokens that user deposits and leaves in the pool, but this requires more complicated Config.
+
+## Weights
+For the time being weights has not been calculated.
