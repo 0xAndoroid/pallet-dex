@@ -59,7 +59,7 @@ pub mod pallet {
         // A constant of hundred percent mark (for fees)
         #[pallet::constant]
         type HundredPercent: Get<Self::Balance>;
-        
+
         // A constant of hundred percent minus a fee mark
         #[pallet::constant]
         type HundredPercentMinusFee: Get<Self::Balance>;
@@ -278,7 +278,7 @@ pub mod pallet {
             let pool_dest_token_balance =
                 T::MultiToken::get_balance(&corresponding_token_id, &pool)
                     .ok_or(Error::<T>::EmptyPool)?;
-                    
+
             ensure!(
                 !pool_origin_token_balance.is_zero() && !pool_dest_token_balance.is_zero(),
                 Error::<T>::EmptyPool
@@ -291,7 +291,7 @@ pub mod pallet {
                 .checked_add(
                     &pool_origin_token_balance
                         .checked_mul(&amount)
-                        .ok_or(Error::<T>::Overflow)?
+                        .ok_or(Error::<T>::Overflow)?,
                 )
                 .ok_or(Error::<T>::Overflow)?;
             let sqrt = partial_result.integer_sqrt();
@@ -299,7 +299,12 @@ pub mod pallet {
                 .checked_sub(&pool_origin_token_balance)
                 .ok_or(Error::<T>::Overflow)?;
 
-            let received_after_swap = Self::swap(operator.clone(), pool.clone(), token_id.clone(), to_swap_amount.clone())?;
+            let received_after_swap = Self::swap(
+                operator.clone(),
+                pool.clone(),
+                token_id.clone(),
+                to_swap_amount.clone(),
+            )?;
 
             Self::dep(operator, pool, corresponding_token_id, received_after_swap)?;
 
@@ -337,15 +342,12 @@ pub mod pallet {
             let pool_dest_token_balance =
                 T::MultiToken::get_balance(&corresponding_token_id, &pool)
                     .ok_or(Error::<T>::EmptyPool)?;
-                    
+
             ensure!(
                 !pool_origin_token_balance.is_zero() && !pool_dest_token_balance.is_zero(),
                 Error::<T>::EmptyPool
             );
-            ensure!(
-                pool_origin_token_balance >= amount,
-                Error::<T>::Overflow
-            );
+            ensure!(pool_origin_token_balance >= amount, Error::<T>::Overflow);
 
             let partial_result = pool_origin_token_balance
                 .checked_mul(&pool_origin_token_balance)
@@ -353,18 +355,24 @@ pub mod pallet {
                 .checked_sub(
                     &pool_origin_token_balance
                         .checked_mul(&amount)
-                        .ok_or(Error::<T>::Overflow)?
+                        .ok_or(Error::<T>::Overflow)?,
                 )
                 .ok_or(Error::<T>::Overflow)?;
             let sqrt = partial_result.integer_sqrt();
             let to_withdraw_amount = pool_origin_token_balance
                 .checked_sub(&sqrt)
                 .ok_or(Error::<T>::Overflow)?;
-            
-            let withdrawn_of_corresponding_token = Self::with(operator.clone(), pool.clone(), token_id, to_withdraw_amount)?;
-            
-            Self::swap(operator, pool, corresponding_token_id, withdrawn_of_corresponding_token)?;
-            
+
+            let withdrawn_of_corresponding_token =
+                Self::with(operator.clone(), pool.clone(), token_id, to_withdraw_amount)?;
+
+            Self::swap(
+                operator,
+                pool,
+                corresponding_token_id,
+                withdrawn_of_corresponding_token,
+            )?;
+
             Ok(())
         }
     }
@@ -558,13 +566,13 @@ pub mod pallet {
             Ok(())
         }
 
-        // Returns the amount of corresponding tokens that has been withdrawn 
+        // Returns the amount of corresponding tokens that has been withdrawn
         fn with(
             operator: T::AccountId,
             pool: T::AccountId,
             token_id: T::AssetId,
             amount: T::Balance,
-        )  -> Result<T::Balance, DispatchError> {
+        ) -> Result<T::Balance, DispatchError> {
             ensure!(!amount.is_zero(), Error::<T>::WithdrawingZeroAmount);
             ensure!(Self::get_pool(&pool) != None, Error::<T>::NoSuchPool);
 
@@ -646,13 +654,17 @@ pub mod pallet {
             Ok(corresponding_token_amount)
         }
 
-        fn fetch_pool_constant(pool: &T::AccountId, token_id: &T::AssetId, corresponding_token_id: &T::AssetId) -> DispatchResult {
-            let (first_asset_id, second_asset_id, _) = Self::get_pool(pool).ok_or(Error::<T>::NoSuchPool)?;
+        fn fetch_pool_constant(
+            pool: &T::AccountId,
+            token_id: &T::AssetId,
+            corresponding_token_id: &T::AssetId,
+        ) -> DispatchResult {
+            let (first_asset_id, second_asset_id, _) =
+                Self::get_pool(pool).ok_or(Error::<T>::NoSuchPool)?;
             let pool_origin_token_balance =
                 T::MultiToken::get_balance(token_id, pool).ok_or(Error::<T>::EmptyPool)?;
-            let pool_dest_token_balance =
-                T::MultiToken::get_balance(corresponding_token_id, pool)
-                    .ok_or(Error::<T>::EmptyPool)?;
+            let pool_dest_token_balance = T::MultiToken::get_balance(corresponding_token_id, pool)
+                .ok_or(Error::<T>::EmptyPool)?;
             let new_constant = pool_origin_token_balance
                 .checked_mul(&pool_dest_token_balance)
                 .ok_or(Error::<T>::Overflow)?;
