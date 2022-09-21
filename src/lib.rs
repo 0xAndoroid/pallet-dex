@@ -130,7 +130,6 @@ pub mod pallet {
     pub enum Error<T> {
         // An arithmetic overflow
         Overflow,
-        Overflow2,
         // Depositing 0 amount for init, swap or deposit functions
         DepositingZeroAmount,
         // Trying to withdraw 0 amount from the pool
