@@ -168,8 +168,8 @@ pub mod pallet {
             );
             ensure!(Self::get_pool(&pool) == None, Error::<T>::PoolAlreadyExists);
             ensure!(first_token_id != second_token_id, Error::<T>::SameAssetPool);
-            Self::check_balance(&first_token_id, &creator, first_token_amount.clone())?;
-            Self::check_balance(&second_token_id, &creator, second_token_amount.clone())?;
+            Self::check_balance(&first_token_id, &creator, first_token_amount)?;
+            Self::check_balance(&second_token_id, &creator, second_token_amount)?;
 
             let pool_constant = first_token_amount
                 .checked_mul(&second_token_amount)
@@ -179,26 +179,19 @@ pub mod pallet {
                 creator.clone(),
                 creator.clone(),
                 pool.clone(),
-                first_token_id.clone(),
-                first_token_amount.clone(),
+                first_token_id,
+                first_token_amount,
             )?;
 
             T::MultiToken::safe_transfer(
                 creator.clone(),
                 creator.clone(),
                 pool.clone(),
-                second_token_id.clone(),
-                second_token_amount.clone(),
+                second_token_id,
+                second_token_amount,
             )?;
 
-            Pools::<T>::insert(
-                &pool,
-                (
-                    first_token_id.clone(),
-                    second_token_id.clone(),
-                    pool_constant,
-                ),
-            );
+            Pools::<T>::insert(&pool, (first_token_id, second_token_id, pool_constant));
             PoolShares::<T>::insert(&pool, &creator, T::DefaultShare::get());
             TotalPoolShares::<T>::insert(&pool, T::DefaultShare::get());
 
@@ -258,7 +251,7 @@ pub mod pallet {
 
             ensure!(!amount.is_zero(), Error::<T>::DepositingZeroAmount);
             ensure!(Self::get_pool(&pool) != None, Error::<T>::NoSuchPool);
-            Self::check_balance(&token_id, &operator, amount.clone())?;
+            Self::check_balance(&token_id, &operator, amount)?;
 
             // We have already checked that pool exists, unwrap is safe
             let (first_asset_id, second_asset_id, _) = Self::get_pool(&pool).unwrap();
@@ -299,12 +292,8 @@ pub mod pallet {
                 .checked_sub(&pool_origin_token_balance)
                 .ok_or(Error::<T>::Overflow)?;
 
-            let received_after_swap = Self::swap(
-                operator.clone(),
-                pool.clone(),
-                token_id.clone(),
-                to_swap_amount.clone(),
-            )?;
+            let received_after_swap =
+                Self::swap(operator.clone(), pool.clone(), token_id, to_swap_amount)?;
 
             Self::dep(operator, pool, corresponding_token_id, received_after_swap)?;
 
@@ -403,7 +392,7 @@ pub mod pallet {
         ) -> Result<T::Balance, DispatchError> {
             ensure!(!amount.is_zero(), Error::<T>::DepositingZeroAmount);
             ensure!(Self::get_pool(&pool) != None, Error::<T>::NoSuchPool);
-            Self::check_balance(&token_id, &operator, amount.clone())?;
+            Self::check_balance(&token_id, &operator, amount)?;
 
             // We have already checked that pool exists, unwrap is safe
             let (first_asset_id, second_asset_id, constant) = Self::get_pool(&pool).unwrap();
@@ -446,16 +435,16 @@ pub mod pallet {
                 operator.clone(),
                 operator.clone(),
                 pool.clone(),
-                token_id.clone(),
-                amount.clone(),
+                token_id,
+                amount,
             )?;
 
             T::MultiToken::safe_transfer(
                 pool.clone(),
                 pool.clone(),
                 operator.clone(),
-                corresponding_token_id.clone(),
-                swap_token_result.clone(),
+                corresponding_token_id,
+                swap_token_result,
             )?;
 
             // Since we took the fee, we need to alter the pool constant
@@ -467,7 +456,7 @@ pub mod pallet {
                 first_asset: first_asset_id,
                 first_asset_amount: amount,
                 second_asset: corresponding_token_id,
-                second_asset_amount: swap_token_result.clone(),
+                second_asset_amount: swap_token_result,
             });
 
             Ok(swap_token_result)
@@ -481,7 +470,7 @@ pub mod pallet {
         ) -> DispatchResult {
             ensure!(!amount.is_zero(), Error::<T>::DepositingZeroAmount);
             ensure!(Self::get_pool(&pool) != None, Error::<T>::NoSuchPool);
-            Self::check_balance(&token_id, &operator, amount.clone())?;
+            Self::check_balance(&token_id, &operator, amount)?;
 
             let (first_asset_id, second_asset_id, _) = Self::get_pool(&pool).unwrap();
             let corresponding_token_id = if token_id == first_asset_id {
@@ -511,7 +500,7 @@ pub mod pallet {
             Self::check_balance(
                 &corresponding_token_id,
                 &operator,
-                corresponding_token_amount.clone(),
+                corresponding_token_amount,
             )?;
 
             let current_full_share =
@@ -537,16 +526,16 @@ pub mod pallet {
                 operator.clone(),
                 operator.clone(),
                 pool.clone(),
-                token_id.clone(),
-                amount.clone(),
+                token_id,
+                amount,
             )?;
 
             T::MultiToken::safe_transfer(
                 operator.clone(),
                 operator.clone(),
                 pool.clone(),
-                corresponding_token_id.clone(),
-                corresponding_token_amount.clone(),
+                corresponding_token_id,
+                corresponding_token_amount,
             )?;
 
             Self::fetch_pool_constant(&pool, &token_id, &corresponding_token_id)?;
@@ -628,16 +617,16 @@ pub mod pallet {
                 pool.clone(),
                 pool.clone(),
                 operator.clone(),
-                token_id.clone(),
-                amount.clone(),
+                token_id,
+                amount,
             )?;
 
             T::MultiToken::safe_transfer(
                 pool.clone(),
                 pool.clone(),
                 operator.clone(),
-                corresponding_token_id.clone(),
-                corresponding_token_amount.clone(),
+                corresponding_token_id,
+                corresponding_token_amount,
             )?;
 
             Self::fetch_pool_constant(&pool, &token_id, &corresponding_token_id)?;
@@ -648,7 +637,7 @@ pub mod pallet {
                 first_asset: token_id,
                 first_asset_amount: amount,
                 second_asset: corresponding_token_id,
-                second_asset_amount: corresponding_token_amount.clone(),
+                second_asset_amount: corresponding_token_amount,
             });
 
             Ok(corresponding_token_amount)
