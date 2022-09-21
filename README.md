@@ -2,6 +2,8 @@
 An implementation of AMM decentralized exchange as a pallet for Substrate. Is designed to be used with [pallet-multi-token](https://github.com/AndoroidX/pallet-multi-token).
 This pallet uses constant product formula for swaps.
 
+## Environment
+Environment has been configured in a fork of `substrate-node-template` on a branch `pallet-multi-token`. [Link](https://github.com/AndoroidX/substrate-node-template/tree/pallet-multi-token)
 ## Config
 ### `type Balance` 
 is a number-like type which is used to store balances, shares of the pool and fees. Assumed to be the same one as the `pallet_multi_token` uses.  
